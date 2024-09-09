@@ -13,7 +13,7 @@ function check_sampling_selection_and_clear_file(oversampleOption::Bool, undersa
     end
 end
 
-function get_outfile_name_from_infile(inFile::String, outFile::String)
+function get_outfile_name_from_infile(inFile::String, outFileLocation::String)
     splitFile = split(inFile, "/")
     splitFile = split(splitFile[end], ".")
     fileName = splitFile[1]
