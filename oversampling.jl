@@ -4,24 +4,16 @@ using Statistics
 using Measures, Plots; gr()
 using CSV
 
-# script inputs
-# input a fasta file with ID, Country:Region, [other stuff], date yyyy-mm-dd
-inFile = "ncbi_canineParvovirus_2024-04-15_China_VP2-clean.fasta"
-outFileLocation = ""
-n = 1 # partition by 1, 2, 3, 4, 6, and 12 month groups -> 1=each month, 12=each year
-minSamplesNeeded = 10
-# fixed number for all sampling
-monthIfNoMonth = "01"
-dayIfNoDay = "01"
-oversample = true
-undersample = true
+function check_sampling_selection_and_clear_file(oversampleOption::Bool, undersampleOption::Bool, outFile::String)
+    if (oversampleOption == false) && (undersampleOption == false)
+        display("Neither oversampling or undersampling was selected.")
+        exit()
+    else
+        write(outFile, "")
+    end
+end
 
-outFileName = get_outfile_name_from_infile(inFile, outFileLocation)
-
-fastaDF = DataFrame(ID = String[], Year = Integer[], Month = Integer[], Day = Integer[], Seq = String[]) # initialize dataframe
-read_fasta_file(inFile::string, fastaDF::DataFrame, [monthIfNoMonth, dayIfNoDay])
-
-function get_outfile_name_from_infile(inFile::String, outFile::String, missingDateOptions::AbstractVector)
+function get_outfile_name_from_infile(inFile::String, outFile::String)
     splitFile = split(inFile, "/")
     splitFile = split(splitFile[end], ".")
     fileName = splitFile[1]
@@ -29,25 +21,7 @@ function get_outfile_name_from_infile(inFile::String, outFile::String, missingDa
     return outFileName
 end
 
-function read_fasta_file(inFile::string, fastaDF::DataFrame)
-    FastaReader(inFile) do fr # parse fasta file
-        for (header, seq) in fr
-
-            splitHeader = split(header, "_") # split header
-            splitDate = split(splitHeader[end], "-") # last input is date
-
-            if splitDate[1] == "" # if no date skip
-                global noDateCount += 1
-                continue
-            else # otherwise push to dataframe 
-                push_sequence_to_df(splitDate)
-            end
-
-        end
-    end
-end
-
-function push_sequence_to_df(splitDate, missingDateOptions)
+function adjust_dates_for_missing_values(splitDate::Vector, missingDateOptions::Vector)
     if length(splitDate) == 3
         adjustedDate = [splitDate[1], splitDate[2], splitDate[2]]
     elseif length(splitDate) == 2
@@ -55,70 +29,126 @@ function push_sequence_to_df(splitDate, missingDateOptions)
     elseif length(splitDate) == 1
         adjustedDate = [splitDate[1], missingDateOptions[1], missingDateOptions[2]] # where to put samples missing months?
     end
-
-    year = tryparse(Integer, adjustedDate[1])
-    month = tryparse(Integer, adjustedDate[2])
-    day = tryparse(Integer, adjustedDate[3])
-    push!(fastaDF, [splitHeader[1], year, month, day, seq])
+    return adjustedDate
 end
 
-dfYearMonth = Array{Any}(undef,0)
-dfYear = groupby(fastaDF, :Year)
-conditions = Vector{BitVector}(undef, length(1:n:12))
-for frame in dfYear
+function read_fasta_file(inFile::String, fastaDF::DataFrame, missingDateOptions::Vector{String})
+    FastaReader(inFile) do fr # parse fasta file
+        for (header, seq) in fr
+
+            splitHeader = split(header, "_") # split header
+            ID = splitHeader[1]
+
+            splitDate = split(splitHeader[end], "-") # last input is date
+
+            if splitDate[1] == "" # if no date skip
+                global noDateCount += 1
+                continue
+            else # otherwise push to dataframe 
+                adjustedDate = adjust_dates_for_missing_values(splitDate, missingDateOptions)
+                push!(fastaDF, [ID, adjustedDate[1], adjustedDate[2], adjustedDate[3], seq])
+            end
+
+        end
+    end
+end
+
+function set_conditions(frame::SubDataFrame, conditions::Vector, monthsPerGroup::Integer)
+    frameMonth = tryparse.(Int, frame.Month)
     let iter = 1
-        for i in 1:n:12
-            conditions[iter] = (frame.Month .>= i) .& (frame.Month .< i+n)
+        for i in 1:monthsPerGroup:12
+            conditions[iter] = (frameMonth .>= i) .& (frameMonth .< i+monthsPerGroup)
             iter = iter + 1
         end
     end
+end
+
+function push_to_dfsByGroupSize(frame::SubDataFrame, dfsByGroupSize::Array, conditions::Vector)
     for i in 1:length(conditions)
         if size(frame[conditions[i], :], 1) != 0
-            push!(dfYearMonth, frame[conditions[i], :])
+            push!(dfsByGroupSize, frame[conditions[i], :])
         end
     end
 end
 
-if (oversample == false) && (undersample == false)
-    display("Neither oversampling or undersampling was selected.")
-    exit()
-else
-    write(outFile, "")
+function split_fastaDF_by_year_and_month(fastaDF::DataFrame, dfsByGroupSize::Array, monthsPerGroup::Integer)
+    fastaGroupedByYearDF = groupby(fastaDF, :Year)
+    conditions = Vector{BitVector}(undef, length(1:monthsPerGroup:12))
+    for frame in fastaGroupedByYearDF
+        set_conditions(frame, conditions, monthsPerGroup)
+        push_to_dfsByGroupSize(frame, dfsByGroupSize, conditions)
+    end
 end
 
-for frame in dfYearMonth
-    numRow = size(frame, 1)
+function oversample_undersample(minSamplesNeeded::Integer)
+    for frame in dfsByGroupSize
+        numRow = size(frame, 1)
 
-    if oversample == true
-        let copyNum = 1
-            while size(frame, 1) < minSamplesNeeded 
-                let iter = rand(1:numRow)
-                    editedID = frame[iter, "ID"] * "/copy" * string(copyNum) # needs to be random
-                    push!(frame, [editedID, frame[iter, "Year"], frame[iter, "Month"], frame[iter, "Day"], frame[iter, "Seq"]])
-                    #duplicate row of frame[i] and add indicator
-                    copyNum = copyNum + 1
-                end
+        if oversampleOption == true
+            oversample(frame, minSamplesNeeded, numRow)
+        end
+        if undersampleOption == true
+            undersample(frame, minSamplesNeeded, numRow)
+        end
+        
+        write_to_os_file(frame::DataFrame, outFile::String)
+        
+    end
+end
+
+function oversample(frame::DataFrame, minSamplesNeeded::Integer, numRow::Integer)
+    let copyNum = 1
+        while size(frame, 1) < minSamplesNeeded 
+            let iter = rand(1:numRow)
+                editedID = frame[iter, "ID"] * "/copy" * string(copyNum) # needs to be random
+                push!(frame, [editedID, frame[iter, "Year"], frame[iter, "Month"], frame[iter, "Day"], frame[iter, "Seq"]])
+                #duplicate row of frame[i] and add indicator
+                copyNum = copyNum + 1
             end
         end
     end
+end
 
-    if undersample == true
-        let copyNum = 0
-            while size(frame, 1) > minSamplesNeeded 
-                let iter = rand(1:numRow - copyNum)
-                    delete!(frame, iter)
-                    #duplicate row of frame[i] and add indicator
-                    copyNum = copyNum + 1
-                end
+function undersample(frame::DataFrame, minSamplesNeeded::Integer, numRow::Integer)
+    let copyNum = 0
+        while size(frame, 1) > minSamplesNeeded 
+            let iter = rand(1:numRow - copyNum)
+                delete!(frame, iter)
+                copyNum = copyNum + 1
             end
         end
     end
+end
 
+function write_to_os_file(frame::DataFrame, outFile::String)
     for row in eachrow(frame)
         header = row["ID"]*"_"*string(row["Year"])*"-"*string(row["Month"])*"-"*string(row["Day"])
         seq = row["Seq"]
         writefasta(outFile, [(header, seq)], "a")
     end
 end
+
+# main
+
+# script inputs
+# input a fasta file with ID, Country:Region, [other stuff], date yyyy-mm-dd
+inFile = "ncbi_canineParvovirus_2024-04-15_China_VP2-clean.fasta"
+outFileLocation = ""
+monthsPerGroup = 1 # partition by 1, 2, 3, 4, 6, and 12 month groups -> 1=each month, 12=each year
+minSamplesNeeded = 10 # fixed number for all sampling
+monthIfNoMonth = "01"
+dayIfNoDay = "01"
+oversampleOption = true
+undersampleOption = true
+
+fastaDF = DataFrame(ID = String[], Year = String[], Month = String[], Day = String[], Seq = String[]) # initialize dataframe
+dfsByGroupSize = Array{DataFrame}(undef,0)
+
+outFile = get_outfile_name_from_infile(inFile, outFileLocation)
+check_sampling_selection_and_clear_file(oversampleOption, undersampleOption, outFile)
+
+read_fasta_file(inFile, fastaDF, [monthIfNoMonth, dayIfNoDay])
+split_fastaDF_by_year_and_month(fastaDF, dfsByGroupSize, monthsPerGroup)
+oversample_undersample(minSamplesNeeded)
 
 display("Done!")
