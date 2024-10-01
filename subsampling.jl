@@ -5,18 +5,18 @@ using Measures, Plots; gr()
 using CSV
 
 # script inputs
-inFile = "../Data/Sources/Final/ncbi_allFluAH3N2_2024-05-07.fasta" # input a fasta file with ID, Country:Region, [other stuff], date yyyy-mm-dd 
+inFile = "~/../Exploratory/ncbi_dengueV1-E_global_2024-06-19.fasta" # input a fasta file with ID, Country:Region, [other stuff], date yyyy-mm-dd 
 n = 12 # partition by 1, 2, 3, 4, 6, and 12 month groups
 noMonth = "0" # if 0, missing months are excluded from exploration. If 1-12, will set missing months in that month (1 or 6 reccomended)
 
-lowTime = (0, 01) # lower bound of dates wanted. set to 0,0 for all
+lowTime = (2016, 01) # lower bound of dates wanted. set to 0,0 for all
 highTime = (3000, 01) # upper bound of dates wanted set to 3000, 30 or other large numbers for all
 chosenCountry = "India" # country to sample from
 
 heatmapBool = true
 
 out = false # if true outputs a subsample
-outFile = "../Data/Sources/" # name of outputfile
+outFile = "~/../Data/Sources/ncbi_dengueV1-E_India_2024-06-19.fasta" # name of outputfile
 
 noDateCount = 0 # initialize counts
 noPlaceCount = 0

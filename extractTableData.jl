@@ -10,21 +10,6 @@ inFile = "Data/Runs/beastRun_2024-05-27/ncbi_fluAH3N2_2024-05-07_Thailand_table.
 # output from header -> download date, country
 # output sequence length, # samples, earliest date, latest date, # unique months
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 noDateCount = 0 # initialize counts
 noPlaceCount = 0
 input = inFileLocation*inFile*".fasta"
